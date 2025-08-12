@@ -31,10 +31,38 @@ export default function AccountForm({ masterKey, onCreated }) {
   const [expiresAt, setExpiresAt] = useState("")  // yyyy-mm-dd
   const [priority, setPriority] = useState("")    // Cao / Trung_binh / Thap
   const [status, setStatus] = useState("")        // Dang_dung / Tam_khoa / Het_han
+  // đánh dấu người dùng đã sửa tay để không auto ghi đè
+  const [touchedTitle, setTouchedTitle] = useState(false);
+  const [touchedTags, setTouchedTags] = useState(false);
 
   const PRIORITIES = ["Cao", "Trung_binh", "Thap"]
   const STATUSES   = ["Dang_dung", "Tam_khoa", "Het_han"]
   const INDUSTRIES = ["Facebook", "YouTube", "Zalo", "Shopee", "Khac"]
+  function buildAutoTitle() {
+    const who = username || email || "";
+    const plat = platform || "";
+    const title = [plat, who].filter(Boolean).join(" - ");
+    return title || form.title || "";
+  }
+  
+  function buildAutoTags() {
+    const list = [industry, priority, status].filter(Boolean);
+    const auto = list.join(",");
+    return auto || form.tags || "";
+  }
+  // TỰ ĐIỀN TIÊU ĐỀ khi đổi platform/username/email (nếu bạn CHƯA gõ tay vào ô Tiêu đề)
+  React.useEffect(() => {
+    if (!touchedTitle) {
+      setForm(s => ({ ...s, title: buildAutoTitle() }));
+    }
+  }, [platform, username, email]);
+  
+  // TỰ ĐIỀN TAGS khi đổi industry/priority/status (nếu bạn CHƯA gõ tay vào ô Tags)
+  React.useEffect(() => {
+    if (!touchedTags) {
+      setForm(s => ({ ...s, tags: buildAutoTags() }));
+    }
+  }, [industry, priority, status]);
 
   async function submit(e) {
     e.preventDefault()
