@@ -1,4 +1,4 @@
-# backend/main.py (sync)
+# backend/main.py (sync + debug Sheets)
 import os
 from uuid import UUID
 from fastapi import FastAPI, Depends, HTTPException, APIRouter
@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from .db import SessionLocal, engine, Base
 from .models import AccountCipher
 from .schemas import AccountIn, AccountOut, HealthOut
-from .sheets import append_encrypted_row
+from .sheets import append_encrypted_row, debug_sheets, try_append_ping
 
 app = FastAPI(title="Account Vault", version="1.0.0")
 
@@ -32,6 +32,16 @@ api = APIRouter(prefix="/api")
 @api.get("/debug/db", response_model=HealthOut)
 def debug_db():
     return HealthOut(ok=True)
+
+# NEW: debug Sheets (không ghi)
+@api.get("/debug/sheets")
+def debug_sheets_info():
+    return debug_sheets()
+
+# NEW: thử ghi 1 dòng "PING" vào sheet
+@api.get("/debug/sheets/ping")
+def debug_sheets_ping():
+    return try_append_ping()
 
 @api.get("/accounts", response_model=list[AccountOut])
 def list_accounts(db: Session = Depends(get_db)):
@@ -56,6 +66,7 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)):
     db.add(item)
     db.commit()
     db.refresh(item)
+    # Backup Sheets: kết quả/ lỗi sẽ được kiểm tra qua endpoint debug
     try:
         append_encrypted_row({
             "id": str(item.id),
@@ -82,7 +93,7 @@ def delete_account(account_id: UUID, db: Session = Depends(get_db)):
 
 app.include_router(api)
 
-# ---------- Static frontend (Vite build sẽ được copy vào backend/static) ----------
+# ---------- Static frontend (Vite build trong backend/static) ----------
 DIST_DIR = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(DIST_DIR):
     app.mount("/", StaticFiles(directory=DIST_DIR, html=True), name="static")
