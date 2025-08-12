@@ -1,7 +1,7 @@
 services:
   - type: web
     name: account-vault
-    env: python
+    runtime: python
     pythonVersion: 3.11
     plan: free
     buildCommand: >
