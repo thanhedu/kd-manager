@@ -1,16 +1,17 @@
-import os
-import re
-import json
-from typing import Dict, Any, Tuple, Optional
+# backend/sheets.py
+import os, re, json
+from typing import Dict, Any, Tuple, Optional, List
 import gspread
 
 _SHEET_NAME = os.environ.get("GOOGLE_SHEETS_NAME", "Accounts")
 _GOOGLE_CREDENTIALS = os.environ.get("GOOGLE_CREDENTIALS_JSON")
 
+# Ví dụ: "platform|Tên nền tảng, url|Link web, note|Ghi chú chung, username|Username, ciphertext|Pass mã hóa, email|Email, email_recovery|Email recovery, dob|Ngày sinh, phone|Số điện thoại, twofa|2FA, industry|Lĩnh vực, tags|Tag nhãn, expires_at|Hạn sử dụng, priority|Mức ưu tiên, status|Trạng thái, created_at|Ngày tạo, updated_at|Ngày cập nhật"
+_COLUMNS_RAW = os.environ.get("GOOGLE_SHEETS_COLUMNS", "").strip()
+
 _client_cache: Optional[Dict[str, Any]] = None
 
 def _looks_like_sheet_id(s: str) -> bool:
-    # Spreadsheet ID: chuỗi gồm [A-Za-z0-9-_], thường dài > 30
     return bool(re.fullmatch(r"[A-Za-z0-9_-]{30,}", s or ""))
 
 def _get_client() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -26,45 +27,101 @@ def _get_client() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         gc = gspread.service_account_from_dict(creds)
 
         sh = None
-        # Ưu tiên mở bằng ID nếu trông giống ID (không cần Drive API)
         if _looks_like_sheet_id(_SHEET_NAME):
             try:
                 sh = gc.open_by_key(_SHEET_NAME)
             except Exception:
                 sh = None
-
         if sh is None:
             try:
-                sh = gc.open(_SHEET_NAME)  # mở theo TITLE (cần Drive API)
+                sh = gc.open(_SHEET_NAME)
             except gspread.SpreadsheetNotFound:
                 return None, f"SPREADSHEET_NOT_FOUND name_or_id='{_SHEET_NAME}'"
 
         ws = sh.sheet1
         _client_cache = {"gc": gc, "sh": sh, "ws": ws, "sa_email": sa_email}
         return _client_cache, None
-
     except Exception as e:
         return None, f"INIT_ERROR: {e.__class__.__name__}: {e}"
 
+def _parse_columns() -> List[Tuple[str, str]]:
+    """
+    Trả về list (key, header). Nếu không cấu hình -> 8 cột mặc định.
+    key có thể là bất kỳ trường trong payload meta hoặc các trường "đặc biệt":
+      id, ciphertext, nonce, salt, title, tags, created_at, updated_at
+    """
+    if not __COLUMNS_RAW:
+        return [
+            ("id","id"),
+            ("ciphertext","ciphertext"),
+            ("nonce","nonce"),
+            ("salt","salt"),
+            ("title","title"),
+            ("tags","tags"),
+            ("created_at","created_at"),
+            ("updated_at","updated_at"),
+        ]
+    cols = []
+    for part in _COLUMNS_RAW.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "|" in part:
+            key, header = [x.strip() for x in part.split("|", 1)]
+        else:
+            key, header = part, part
+        cols.append((key, header))
+    return cols
+
+def _ensure_header(ws, columns: List[Tuple[str,str]]):
+    try:
+        first_row = ws.row_values(1)
+    except Exception:
+        first_row = []
+    desired = [h for _, h in columns]
+    if first_row != desired:
+        # nếu sheet trống -> update nguyên hàng; nếu đã có thì ghi đè hàng 1
+        if len(first_row) == 0:
+            ws.update("A1", [desired])
+        else:
+            ws.update(f"A1:{chr(64+len(desired))}1", [desired])
+
 def append_encrypted_row(row: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    """
+    row: gồm id/ciphertext/nonce/salt/title/tags/created_at/updated_at
+    Có thể có thêm row["meta"] là dict các field tuỳ ý.
+    """
     ctx, err = _get_client()
     if err:
         return False, err
+
+    columns = _parse_columns()
+    _ensure_header(ctx["ws"], columns)
+
+    # build source dict
+    source = {
+        "id": row.get("id",""),
+        "ciphertext": row.get("ciphertext",""),
+        "nonce": row.get("nonce",""),
+        "salt": row.get("salt",""),
+        "title": row.get("title",""),
+        "tags": row.get("tags",""),
+        "created_at": row.get("created_at",""),
+        "updated_at": row.get("updated_at",""),
+    }
+    meta = row.get("meta") or {}
+    if isinstance(meta, dict):
+        source.update(meta)  # cho phép field tuỳ ý từ frontend
+
+    values = [str(source.get(key,"")) for key,_ in columns]
+
     try:
-        ctx["ws"].append_row([
-            row.get("id", ""),
-            row.get("ciphertext", ""),
-            row.get("nonce", ""),
-            row.get("salt", ""),
-            row.get("title", ""),
-            row.get("tags", ""),
-            row.get("created_at", ""),
-            row.get("updated_at", ""),
-        ], value_input_option="RAW")
+        ctx["ws"].append_row(values, value_input_option="RAW")
         return True, None
     except Exception as e:
         return False, f"APPEND_ERROR: {e.__class__.__name__}: {e}"
 
+# ====== DEBUG giữ nguyên ======
 def debug_sheets() -> Dict[str, Any]:
     info = {"sheet_name": _SHEET_NAME, "has_credentials": bool(_GOOGLE_CREDENTIALS)}
     ctx, err = _get_client()
@@ -76,18 +133,15 @@ def debug_sheets() -> Dict[str, Any]:
         "sa_email": ctx["sa_email"],
         "worksheet_title": ctx["ws"].title,
         "spreadsheet_id": ctx["sh"].id,
+        "columns": _parse_columns(),
     })
     return info
 
 def try_append_ping() -> Dict[str, Any]:
     ok, error = append_encrypted_row({
-        "id": "PING",
-        "ciphertext": "PING",
-        "nonce": "PING",
-        "salt": "PING",
-        "title": "ping",
-        "tags": "debug",
-        "created_at": "",
-        "updated_at": "",
+        "id":"PING","ciphertext":"PING","nonce":"PING","salt":"PING",
+        "title":"ping","tags":"debug",
+        "created_at":"","updated_at":"",
+        "meta":{"platform":"test"}
     })
     return {"ok": ok, "error": error, "sheet_name": _SHEET_NAME}
