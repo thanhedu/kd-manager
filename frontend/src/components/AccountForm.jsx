@@ -121,11 +121,25 @@ export default function AccountForm({ masterKey, onCreated }) {
       <div className="row">
         <div>
           <label>Tiêu đề</label>
-          <input value={form.title} onChange={set('title')} />
+          <input
+            value={form.title}
+            onChange={(e) => { 
+              setTouchedTitle(true); 
+              setForm(s => ({ ...s, title: e.target.value })); 
+            }}
+          />
         </div>
         <div>
-          <label>Tags</label>
-          <input value={form.tags} onChange={set('tags')} placeholder="work,personal,..." />
+          <<label>Tags</label>
+          <input
+            value={form.tags}
+            placeholder="work,personal,..."
+            onChange={(e) => { 
+              setTouchedTags(true); 
+              setForm(s => ({ ...s, tags: e.target.value })); 
+            }}
+          />
+
         </div>
       </div>
       <div className="row">
