@@ -1,6 +1,7 @@
-# backend/main.py (sync + debug Sheets)
 import os
-from uuid import UUID
+import uuid
+from datetime import datetime, timezone
+
 from fastapi import FastAPI, Depends, HTTPException, APIRouter
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -12,7 +13,9 @@ from .models import AccountCipher
 from .schemas import AccountIn, AccountOut, HealthOut
 from .sheets import append_encrypted_row, debug_sheets, try_append_ping
 
+# ========= FastAPI =========
 app = FastAPI(title="Account Vault", version="1.0.0")
+
 
 # ---------- DB session ----------
 def get_db():
@@ -22,40 +25,86 @@ def get_db():
     finally:
         db.close()
 
+
 @app.on_event("startup")
 def on_startup():
     Base.metadata.create_all(bind=engine)
 
-# ---------- API router (prefix /api) ----------
+
+# ---------- API router ----------
 api = APIRouter(prefix="/api")
+
 
 @api.get("/debug/db", response_model=HealthOut)
 def debug_db():
     return HealthOut(ok=True)
 
-# NEW: debug Sheets (không ghi)
+
 @api.get("/debug/sheets")
 def debug_sheets_info():
     return debug_sheets()
 
-# NEW: thử ghi 1 dòng "PING" vào sheet
+
 @api.get("/debug/sheets/ping")
 def debug_sheets_ping():
     return try_append_ping()
 
+
+@api.get("/debug/sheets/write-sample")
+def debug_write_sample():
+    now = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
+    payload = {
+        "id": str(uuid.uuid4()),
+        "ciphertext": "DEMO",
+        "nonce": "DEMO",
+        "salt": "DEMO",
+        "title": "Demo via GET",
+        "tags": "sample",
+        "created_at": now,
+        "updated_at": now,
+        "meta": {
+            "platform": "Facebook",
+            "url": "https://facebook.com",
+            "note": "ghi chu tu debug",
+            "username": "userfb",
+            "email": "u@example.com",
+            "email_recovery": "r@example.com",
+            "dob": "1999-01-01",
+            "phone": "0909000000",
+            "twofa": "true",
+            "industry": "YT",
+            "expires_at": "2025-12-31",
+            "priority": "Cao",
+            "status": "Dang_dung",
+        },
+    }
+    ok, error = append_encrypted_row(payload)
+    return {"ok": ok, "error": error}
+
+
 @api.get("/accounts", response_model=list[AccountOut])
 def list_accounts(db: Session = Depends(get_db)):
-    res = db.execute(select(AccountCipher).order_by(AccountCipher.created_at.desc())).scalars().all()
+    res = db.execute(
+        select(AccountCipher).order_by(AccountCipher.created_at.desc())
+    ).scalars().all()
     return [
         AccountOut(
-            id=r.id, ciphertext=r.ciphertext, nonce=r.nonce, salt=r.salt,
-            title=r.title, tags=r.tags, created_at=r.created_at, updated_at=r.updated_at
+            id=r.id,
+            ciphertext=r.ciphertext,
+            nonce=r.nonce,
+            salt=r.salt,
+            title=r.title,
+            tags=r.tags,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
         )
         for r in res
     ]
 
+
 @api.post("/accounts", response_model=AccountOut, status_code=201)
 def create_account(payload: AccountIn, db: Session = Depends(get_db)):
+    # lưu DB
     item = AccountCipher(
         ciphertext=payload.ciphertext,
         nonce=payload.nonce,
@@ -66,7 +115,11 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)):
     db.add(item)
     db.commit()
     db.refresh(item)
+
+    # backup Sheet
     try:
+        created_iso = item.created_at.replace(tzinfo=timezone.utc).isoformat()
+        updated_iso = item.updated_at.replace(tzinfo=timezone.utc).isoformat()
         append_encrypted_row({
             "id": str(item.id),
             "ciphertext": item.ciphertext,
@@ -74,26 +127,36 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)):
             "salt": item.salt,
             "title": item.title or "",
             "tags": item.tags or "",
-            "created_at": item.created_at.isoformat(),
-            "updated_at": item.updated_at.isoformat(),
-            "meta": payload.meta or {},   # <-- NEW
+            "created_at": created_iso,
+            "updated_at": updated_iso,
+            "meta": payload.meta or {},
         })
     except Exception:
+        # tránh fail request nếu ghi sheet lỗi
         pass
+
     return AccountOut(
-        id=item.id, ciphertext=item.ciphertext, nonce=item.nonce, salt=item.salt,
-        title=item.title, tags=item.tags, created_at=item.created_at, updated_at=item.updated_at
+        id=item.id,
+        ciphertext=item.ciphertext,
+        nonce=item.nonce,
+        salt=item.salt,
+        title=item.title,
+        tags=item.tags,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
     )
 
+
 @api.delete("/accounts/{account_id}", status_code=204)
-def delete_account(account_id: UUID, db: Session = Depends(get_db)):
+def delete_account(account_id: uuid.UUID, db: Session = Depends(get_db)):
     db.execute(delete(AccountCipher).where(AccountCipher.id == account_id))
     db.commit()
     return
 
+
 app.include_router(api)
 
-# ---------- Static frontend (Vite build trong backend/static) ----------
+# ---------- Static frontend (serve build Vite) ----------
 DIST_DIR = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(DIST_DIR):
     app.mount("/", StaticFiles(directory=DIST_DIR, html=True), name="static")
