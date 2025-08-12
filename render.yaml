@@ -6,7 +6,9 @@ services:
     plan: free
     buildCommand: >
       pip install -r backend/requirements.txt &&
-      cd frontend && npm install && npm run build &&
+      cd frontend &&
+      if [ -f package-lock.json ]; then npm ci; else npm install; fi &&
+      npm run build &&
       mkdir -p ../backend/static &&
       cp -r dist/* ../backend/static/
     startCommand: bash backend/start.sh
