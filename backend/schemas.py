@@ -25,4 +25,3 @@ class AccountOut(BaseModel):
 
 class HealthOut(BaseModel):
     ok: bool
-s
