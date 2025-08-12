@@ -1,29 +1,18 @@
 services:
   - type: web
-    name: account-vault-backend
-    env: python
+    name: account-vault
+    runtime: python
     plan: free
-    buildCommand: pip install -r backend/requirements.txt
+    buildCommand: >
+      pip install -r backend/requirements.txt &&
+      cd frontend && npm ci && npm run build &&
+      mkdir -p ../backend/static &&
+      cp -r dist/* ../backend/static/
     startCommand: bash backend/start.sh
     envVars:
       - key: DATABASE_URL
-        sync: false
-      - key: FRONTEND_ORIGIN
         sync: false
       - key: GOOGLE_CREDENTIALS_JSON
         sync: false
       - key: GOOGLE_SHEETS_NAME
         value: Accounts
-
-  - type: web
-    name: account-vault-frontend
-    env: static
-    plan: free
-    buildCommand: cd frontend && npm i && npm run build
-    staticPublishPath: frontend/dist
-    envVars:
-      - key: VITE_API_BASE
-        sync: false
-      - key: VITE_CLIPBOARD_TTL_SEC
-        value: 25
-
