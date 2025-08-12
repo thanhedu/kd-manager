@@ -9,4 +9,21 @@ button.ghost { background: transparent; border: 1px solid #5865f2; }
 .list { margin-top: 16px; }
 .item { padding: 12px; border: 1px solid #2a2f55; border-radius: 12px; margin-bottom: 10px; }
 .badge { display: inline-block; padding: 2px 8px; border: 1px solid #2a2f55; border-radius: 999px; margin-right: 6px; font-size: 12px; }
+/* --- Compact Meta Form (mobile-first) --- */
+.meta-form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.meta-form .full { grid-column: 1 / -1; }
+.meta-form label { font-size: 12px; color: #555; display: block; margin-bottom: 2px; }
+.meta-form input, .meta-form select, .meta-form textarea {
+  width: 100%; padding: 10px 8px; border: 1px solid #ddd; border-radius: 8px;
+  font-size: 14px; outline: none; background: #fff;
+}
+.meta-form input:focus, .meta-form select:focus, .meta-form textarea:focus {
+  border-color: #7aa7ff; box-shadow: 0 0 0 2px rgba(122,167,255,.15);
+}
+.meta-form textarea { min-height: 56px; resize: vertical; }
+.meta-form .switch { display: flex; align-items: center; gap: 8px; }
+.meta-form .row { display: contents; }
+
+/* 1 cột ở màn rất nhỏ; 2 cột ở mobile trở lên để giảm cuộn */
+@media (max-width: 380px) { .meta-form { grid-template-columns: 1fr; } }
 
