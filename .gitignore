@@ -1,1 +1,13 @@
+# Node
+node_modules
+dist
+
+# Python
+__pycache__/
+*.pyc
+.env
+.env.*
+.venv
+# Misc
+.DS_Store
 
