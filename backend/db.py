@@ -1,9 +1,10 @@
+# backend/db.py (sync, dùng psycopg2-binary)
 import os
 import socket
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from sqlalchemy.orm import declarative_base
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
 
-# IPv4 patch (Render đôi khi trỏ IPv6)
+# IPv4-only patch (tránh sự cố DNS/IPv6 trên host free)
 _orig_getaddrinfo = socket.getaddrinfo
 def _ipv4_only(*args, **kwargs):
     res = _orig_getaddrinfo(*args, **kwargs)
@@ -14,12 +15,8 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("Missing DATABASE_URL")
 
-# async engine cho SQLAlchemy 2.x
-engine = create_async_engine(
-    DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://"),
-    pool_pre_ping=True
-)
-SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+# Kết nối sync với psycopg2
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 Base = declarative_base()
-
