@@ -66,7 +66,6 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)):
     db.add(item)
     db.commit()
     db.refresh(item)
-    # Backup Sheets: kết quả/ lỗi sẽ được kiểm tra qua endpoint debug
     try:
         append_encrypted_row({
             "id": str(item.id),
@@ -77,6 +76,7 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)):
             "tags": item.tags or "",
             "created_at": item.created_at.isoformat(),
             "updated_at": item.updated_at.isoformat(),
+            "meta": payload.meta or {},   # <-- NEW
         })
     except Exception:
         pass
