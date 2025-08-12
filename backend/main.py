@@ -1,42 +1,37 @@
+# backend/main.py
 import os
-from fastapi import FastAPI, Depends, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, update, delete
-from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
+from fastapi import FastAPI, Depends, HTTPException, APIRouter
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from sqlalchemy import select, delete
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import SessionLocal, engine, Base
 from .models import AccountCipher
 from .schemas import AccountIn, AccountOut, HealthOut
 from .sheets import append_encrypted_row
 
-FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "*")
+app = FastAPI(title="Account Vault", version="1.0.0")
 
-app = FastAPI(title="Account Vault API", version="1.0.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[FRONTEND_ORIGIN] if FRONTEND_ORIGIN != "*" else ["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+# ---------- DB session ----------
 async def get_db():
     async with SessionLocal() as session:
         yield session
 
 @app.on_event("startup")
 async def on_startup():
-    # Tạo bảng nếu chưa có (đơn giản, thay alembic)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-@app.get("/debug/db", response_model=HealthOut)
+# ---------- API router (prefix /api) ----------
+api = APIRouter(prefix="/api")
+
+@api.get("/debug/db", response_model=HealthOut)
 async def debug_db():
     return HealthOut(ok=True)
 
-@app.get("/accounts", response_model=list[AccountOut])
+@api.get("/accounts", response_model=list[AccountOut])
 async def list_accounts(db: AsyncSession = Depends(get_db)):
     q = select(AccountCipher).order_by(AccountCipher.created_at.desc())
     res = (await db.execute(q)).scalars().all()
@@ -48,7 +43,7 @@ async def list_accounts(db: AsyncSession = Depends(get_db)):
         for r in res
     ]
 
-@app.post("/accounts", response_model=AccountOut, status_code=201)
+@api.post("/accounts", response_model=AccountOut, status_code=201)
 async def create_account(payload: AccountIn, db: AsyncSession = Depends(get_db)):
     item = AccountCipher(
         ciphertext=payload.ciphertext,
@@ -60,7 +55,6 @@ async def create_account(payload: AccountIn, db: AsyncSession = Depends(get_db))
     db.add(item)
     await db.commit()
     await db.refresh(item)
-    # Backup Sheets (best-effort)
     try:
         append_encrypted_row({
             "id": str(item.id),
@@ -79,28 +73,23 @@ async def create_account(payload: AccountIn, db: AsyncSession = Depends(get_db))
         title=item.title, tags=item.tags, created_at=item.created_at, updated_at=item.updated_at
     )
 
-@app.put("/accounts/{account_id}", response_model=AccountOut)
-async def update_account(account_id: UUID, payload: AccountIn, db: AsyncSession = Depends(get_db)):
-    q = select(AccountCipher).where(AccountCipher.id == account_id)
-    row = (await db.execute(q)).scalar_one_or_none()
-    if not row:
-        raise HTTPException(status_code=404, detail="Not found")
-    row.ciphertext = payload.ciphertext
-    row.nonce = payload.nonce
-    row.salt = payload.salt
-    row.title = payload.title
-    row.tags = payload.tags
-    await db.commit()
-    await db.refresh(row)
-    return AccountOut(
-        id=row.id, ciphertext=row.ciphertext, nonce=row.nonce, salt=row.salt,
-        title=row.title, tags=row.tags, created_at=row.created_at, updated_at=row.updated_at
-    )
-
-@app.delete("/accounts/{account_id}", status_code=204)
+@api.delete("/accounts/{account_id}", status_code=204)
 async def delete_account(account_id: UUID, db: AsyncSession = Depends(get_db)):
     q = delete(AccountCipher).where(AccountCipher.id == account_id)
     await db.execute(q)
     await db.commit()
     return
 
+app.include_router(api)
+
+# ---------- Static frontend (Vite build copied to backend/static) ----------
+DIST_DIR = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(DIST_DIR):
+    app.mount("/", StaticFiles(directory=DIST_DIR, html=True), name="static")
+
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str):
+        index_file = os.path.join(DIST_DIR, "index.html")
+        if os.path.exists(index_file):
+            return FileResponse(index_file)
+        raise HTTPException(status_code=404, detail="Not Found")
