@@ -5,13 +5,12 @@ import gspread
 
 _SHEET_NAME = os.environ.get("GOOGLE_SHEETS_NAME", "Accounts")
 _GOOGLE_CREDENTIALS = os.environ.get("GOOGLE_CREDENTIALS_JSON")
-
-# Ví dụ: "platform|Tên nền tảng, url|Link web, note|Ghi chú chung, username|Username, ciphertext|Pass mã hóa, email|Email, email_recovery|Email recovery, dob|Ngày sinh, phone|Số điện thoại, twofa|2FA, industry|Lĩnh vực, tags|Tag nhãn, expires_at|Hạn sử dụng, priority|Mức ưu tiên, status|Trạng thái, created_at|Ngày tạo, updated_at|Ngày cập nhật"
-_COLUMNS_RAW = os.environ.get("GOOGLE_SHEETS_COLUMNS", "").strip()
+_COLUMNS_RAW = (os.environ.get("GOOGLE_SHEETS_COLUMNS", "") or "").strip()
 
 _client_cache: Optional[Dict[str, Any]] = None
 
 def _looks_like_sheet_id(s: str) -> bool:
+    # Spreadsheet ID: [A-Za-z0-9_-], thường dài > 30
     return bool(re.fullmatch(r"[A-Za-z0-9_-]{30,}", s or ""))
 
 def _get_client() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -27,6 +26,7 @@ def _get_client() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         gc = gspread.service_account_from_dict(creds)
 
         sh = None
+        # Ưu tiên mở bằng ID (khỏi cần Drive API)
         if _looks_like_sheet_id(_SHEET_NAME):
             try:
                 sh = gc.open_by_key(_SHEET_NAME)
@@ -34,11 +34,11 @@ def _get_client() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
                 sh = None
         if sh is None:
             try:
-                sh = gc.open(_SHEET_NAME)
+                sh = gc.open(_SHEET_NAME)  # mở theo TITLE (cần Drive API)
             except gspread.SpreadsheetNotFound:
                 return None, f"SPREADSHEET_NOT_FOUND name_or_id='{_SHEET_NAME}'"
 
-        ws = sh.sheet1
+        ws = sh.sheet1   # tab đầu tiên
         _client_cache = {"gc": gc, "sh": sh, "ws": ws, "sa_email": sa_email}
         return _client_cache, None
     except Exception as e:
@@ -47,10 +47,9 @@ def _get_client() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
 def _parse_columns() -> List[Tuple[str, str]]:
     """
     Trả về list (key, header). Nếu không cấu hình -> 8 cột mặc định.
-    key có thể là bất kỳ trường trong payload meta hoặc các trường "đặc biệt":
-      id, ciphertext, nonce, salt, title, tags, created_at, updated_at
+    key lấy từ payload: các field đặc biệt (id/ciphertext/nonce/...) + meta[key]
     """
-    if not __COLUMNS_RAW:
+    if not _COLUMNS_RAW:
         return [
             ("id","id"),
             ("ciphertext","ciphertext"),
@@ -61,7 +60,7 @@ def _parse_columns() -> List[Tuple[str, str]]:
             ("created_at","created_at"),
             ("updated_at","updated_at"),
         ]
-    cols = []
+    cols: List[Tuple[str,str]] = []
     for part in _COLUMNS_RAW.split(","):
         part = part.strip()
         if not part:
@@ -80,17 +79,14 @@ def _ensure_header(ws, columns: List[Tuple[str,str]]):
         first_row = []
     desired = [h for _, h in columns]
     if first_row != desired:
-        # nếu sheet trống -> update nguyên hàng; nếu đã có thì ghi đè hàng 1
+        # chỉ 1–26 cột: đủ cho case hiện tại (17 cột -> A..Q)
+        end_col = chr(64 + len(desired))  # A=65
         if len(first_row) == 0:
             ws.update("A1", [desired])
         else:
-            ws.update(f"A1:{chr(64+len(desired))}1", [desired])
+            ws.update(f"A1:{end_col}1", [desired])
 
 def append_encrypted_row(row: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
-    """
-    row: gồm id/ciphertext/nonce/salt/title/tags/created_at/updated_at
-    Có thể có thêm row["meta"] là dict các field tuỳ ý.
-    """
     ctx, err = _get_client()
     if err:
         return False, err
@@ -98,7 +94,6 @@ def append_encrypted_row(row: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
     columns = _parse_columns()
     _ensure_header(ctx["ws"], columns)
 
-    # build source dict
     source = {
         "id": row.get("id",""),
         "ciphertext": row.get("ciphertext",""),
@@ -111,17 +106,15 @@ def append_encrypted_row(row: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
     }
     meta = row.get("meta") or {}
     if isinstance(meta, dict):
-        source.update(meta)  # cho phép field tuỳ ý từ frontend
+        source.update(meta)
 
     values = [str(source.get(key,"")) for key,_ in columns]
-
     try:
         ctx["ws"].append_row(values, value_input_option="RAW")
         return True, None
     except Exception as e:
         return False, f"APPEND_ERROR: {e.__class__.__name__}: {e}"
 
-# ====== DEBUG giữ nguyên ======
 def debug_sheets() -> Dict[str, Any]:
     info = {"sheet_name": _SHEET_NAME, "has_credentials": bool(_GOOGLE_CREDENTIALS)}
     ctx, err = _get_client()
