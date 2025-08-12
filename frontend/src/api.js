@@ -1,9 +1,10 @@
-const API_BASE = import.meta.env.VITE_API_BASE
+// frontend/src/api.js
+const API_BASE = '/api';
 
 export async function fetchAccounts() {
-  const res = await fetch(`${API_BASE}/accounts`)
-  if (!res.ok) throw new Error('Fetch failed')
-  return await res.json()
+  const res = await fetch(`${API_BASE}/accounts`);
+  if (!res.ok) throw new Error('Fetch failed');
+  return await res.json();
 }
 
 export async function createAccount(payload) {
@@ -11,8 +12,7 @@ export async function createAccount(payload) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
-  })
-  if (!res.ok) throw new Error('Create failed')
-  return await res.json()
+  });
+  if (!res.ok) throw new Error('Create failed');
+  return await res.json();
 }
-
